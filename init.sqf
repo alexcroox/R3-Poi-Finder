@@ -7,109 +7,113 @@ data = "";
 mountCount = 0;
 poiTotalMounts = 0;
 
-[] spawn {
-    waitUntil {sleep 1; !isNull player && alive player};
+waitUntil {sleep 1; !isNull player && alive player};
 
-    hint "Now Searching for POI, this will take a while...";
+hint "Now Searching for POI, this will take a while...";
 
-    mapCenter = getArray (ConfigFile >> "CfgWorlds" >> mapName >> "centerPosition");
-    mapSize = 2000000;
-    mapElevOffset = getElevationOffset;
+mapCenter = getArray (ConfigFile >> "CfgWorlds" >> mapName >> "centerPosition");
+mapSize = 2000000;
+mapElevOffset = getElevationOffset;
 
-    //mapSize = mapSize / 2;
-    //diag_log format["5R-Location Finder | Map Size (Halved): %1.",mapSize];
+heightTester = createVehicle ["Land_Laptop_F",getPos player,[],0,"NONE"];
 
-    heightTester = createVehicle ["Box_East_Ammo_F",getPos player,[],0,"NONE"];
+{
+    poiType = _x;
+    loggedPOIMounts = [];
+
+    mapLocations = nearestLocations [mapCenter,[_x],mapSize];
+
+    if(poiType == "Mount") then {
+        poiTotalMounts = count mapLocations;
+    };
+
+    diag_log format["R3 POI Finder | Number of %1 locations: %2.", poiType, count mapLocations];
 
     {
-        poiType = _x;
-        loggedPOIMounts = [];
+        ignorePOI = FALSE;
 
-        mapLocations = nearestLocations [mapCenter,[_x],mapSize];
+        poiLabel = text _x;
 
-        if(poiType == "Mount") then {
-            poiTotalMounts = count mapLocations;
+        if (mountCount % 10 == 0) then {
+            hintSilent format["Still working on it... %1/%2", mountCount, poiTotalMounts];
         };
 
-        diag_log format["R3 POI Finder | Number of %1 locations: %2.", poiType, count mapLocations];
+        // We don't want thousands of height markers, make sure there is at least 50m distance between them all
+        if(poiType == "Mount") then {
 
-        {
-            ignorePOI = FALSE;
+            mountCount = mountCount + 1;
 
-            poiLabel = text _x;
+            if (count loggedPOIMounts > 300) then {
 
-            if (mountCount % 10 == 0) then {
-                hintSilent format["Still working on it... %1/%2 (check map)", mountCount, poiTotalMounts];
+                diag_log format["Array too big %1", count loggedPOIMounts];
+
+                private _sliceStart = count loggedPOIMounts - 150;
+                private _newData = loggedPOIMounts select [_sliceStart, 150];
+                loggedPOIMounts = _newData;
+
+                diag_log format["Array smaller %1", count loggedPOIMounts];
             };
 
-            // We don't want thousands of height markers, make sure there is at least 50m distance between them all
-            if(poiType == "Mount") then {
+            currentPOI = _x;
+            {
+                if((getPos currentPOI) distance (getPos _x) < 50) exitWith {ignorePOI = TRUE};
+            } forEach loggedPOIMounts;
 
-                mountCount = mountCount + 1;
+            heightTester setPos getPos _x;
 
-                currentPOI = _x;
-                {
-                    if((getPos currentPOI) distance (getPos _x) < 50) exitWith {ignorePOI = TRUE};
-                } forEach loggedPOIMounts;
+            /*
+            private _debugMarker = createMarker [format["Marker%1", mountCount], getPos heightTester];
+            _debugMarker setMarkerShape "ICON";
+            _debugMarker setMarkerType "hd_dot";
+            _debugMarker setMarkerText format["%1", mountCount];
+            */
 
-                heightTester setPos getPos _x;
+            poiLabel = round ((getPosASL heightTester) select 2);
 
-                private _debugMarker = createMarker [format["Marker%1", mountCount], getPos heightTester];
-                _debugMarker setMarkerShape "ICON";
-                _debugMarker setMarkerType "hd_dot";
-                _debugMarker setMarkerText format["%1", mountCount];
+            if(mapElevOffset > 0) then {
+                poiLabel = mapElevOffset + poiLabel;
+            };
+        };
 
-                sleep 0.05;
+        if(poiType == "Hill" && text _x == "") then {
 
-                poiLabel = round ((getPosASL heightTester) select 2);
+            heightTester setPos getPos _x;
 
-                if(mapElevOffset > 0) then {
-                    poiLabel = mapElevOffset + poiLabel;
-                };
+            poiLabel = round ((getPosASL heightTester) select 2);
+
+            if(mapElevOffset > 0) then {
+                poiLabel = mapElevOffset + poiLabel;
+            };
+        };
+
+        if!(ignorePOI) then {
+
+            if (poiType == "Mount") then {
+                loggedPOIMounts pushback _x;
             };
 
-            if(poiType == "Hill" && text _x == "") then {
+            private _singlePoiData = format['{ "label": "%1", "type": "%2", "x": %3, "y": %4 }',
+                poiLabel,
+                toLower poiType,
+                getPos _x select 0, 
+                getPos _x select 1
+            ];
 
-                heightTester setPos getPos _x;
+            // We don't want leading commas in our JSON
+            private _seperator = if (data == "") then { "" } else { ",\n" };
 
-                sleep 0.05;
+            // Combine this unit's data with our current running movements data
+            data = [[data, _singlePoiData], _seperator] call CBA_fnc_join;
 
-                poiLabel = round ((getPosASL heightTester) select 2);
+        }
+    } forEach mapLocations;
+} forEach ["Name","NameLocal","NameVillage","NameCity","NameCityCapital","Airport","NameMarine","Strategic","StrongPointArea","RockArea","Mount"];
 
-                if(mapElevOffset > 0) then {
-                    poiLabel = mapElevOffset + poiLabel;
-                };
-            };
+"make_file" callExtension (filePath + "|[" + data + "]"); 
 
-            if!(ignorePOI) then {
+diag_log format["R3 POI Finder | All locations found and saved to Arma directory -> %1", filePath];
 
-                if (poiType == "Mount") then {
-                    loggedPOIMounts pushback _x;
-                };
+hint format["Finished! Look for %1 in your Arma directory", filePath];
+sleep 5;
 
-                private _singlePoiData = format['{ "label": "%1", "type": "%2", "x": %3, "y": %4 }',
-                    poiLabel,
-                    toLower poiType,
-                    getPos _x select 0, 
-                    getPos _x select 1
-                ];
-
-                // We don't want leading commas in our JSON
-                private _seperator = if (data == "") then { "" } else { ",\n" };
-
-                // Combine this unit's data with our current running movements data
-                data = [[data, _singlePoiData], _seperator] call CBA_fnc_join;
-
-            }
-        } forEach mapLocations;
-    } forEach ["Name","NameLocal","NameVillage","NameCity","NameCityCapital","Airport","NameMarine","Strategic","StrongPointArea","RockArea","Mount"];
-    
-    "make_file" callExtension (filePath + "|[" + data + "]"); 
-
-    diag_log format["R3 POI Finder | All locations found and saved to Arma directory -> %1", filePath];
-
-    hint format["Finished! Look for %1 in your Arma directory", filePath];
-    sleep 5;
-
-    call BIS_fnc_endMission;
-};
+call BIS_fnc_endMission;
